@@ -1,0 +1,33 @@
+---
+params:
+    batch_size: 100
+    epoch: 100
+    lr: 0.001
+    decay: 1
+    decay_step: 10
+
+save:
+    metapath: "D:/PureGaze-main/exp/Res50-PureGaze/"
+    folder: train_test
+    name: mpii
+    step: 1
+
+data:
+    image: "D:/PureGaze-main/dataset/mpii_train_36000"
+    label: "D:/PureGaze-main/dataset/mpii_train_36000_with_eyecoord.txt"
+    header: True
+    name: mpii
+    isFolder: False
+
+val_data: 
+    image: "D:/PureGaze-main/dataset/mpii_val_9000"
+    label: "D:/PureGaze-main/dataset/mpii_val_9000_with_eyecoord.txt"
+    name: mpii
+    header: True
+    isFolder: False
+
+
+pretrain: ""
+device: 0
+reader: reader_adap
+map: "D:/PureGaze-main/Masker/eth-masker.jpg"

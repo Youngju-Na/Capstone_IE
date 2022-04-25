@@ -1,0 +1,19 @@
+---
+load:
+    begin: 0
+    end: 0
+    steps: 1
+# load:
+#     begin: 0
+#     end: 0
+#     steps: 1
+data: 
+    image: "D:/PureGaze-main/dataset/eth_256_train"
+    label: "D:/PureGaze-main/dataset/eth_label_dict.pickle"
+    name: eth
+    header: True
+    isFolder: False
+pretrain: False
+savename: "evaluation"
+device: 0
+reader: reader_adap

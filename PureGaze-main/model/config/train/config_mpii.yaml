@@ -1,0 +1,35 @@
+---
+params:
+    batch_size: 10
+    epoch: 100
+    lr: 0.0005
+    decay: 1
+    decay_step: 10
+
+save:
+    metapath: "D:/PureGaze-main/exp/Res50-PureGaze/"
+    folder: train_test
+    name: mpii
+    step: 1
+
+data:
+    image: "D:/DRNXMPII/DRNXGAZE/dataset/gene_data/gene_data_HR"
+    label: "D:/PureGaze-main/dataset/MPII_label_dict.pickle"
+    latent: "D:/PureGaze-main/dataset/val_latents"
+    header: True
+    name: mpii
+    isFolder: False
+
+val_data: 
+    image: "D:/DRNXMPII/DRNXGAZE/dataset/benchmark/gene_test/HR"
+    label: "D:/PureGaze-main/dataset/MPII_label_dict.pickle"
+    latent: "D:/PureGaze-main/dataset/val_latents"
+    name: mpii
+    header: True
+    isFolder: False
+
+
+pretrain: ""
+device: 0
+reader: reader_adap
+map: "D:/PureGaze-main/Masker/eth-masker.jpg"
