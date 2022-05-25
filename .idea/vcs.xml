@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="VcsDirectoryMappings">
+    <mapping directory="$PROJECT_DIR$" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/TalkNet-ASD" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/TalkNet-ASD/PureGaze" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/TalkNet-ASD/retinaface-tf2" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/TalkNet-ASD/retinaface_tf2" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/puregaze_original/PureGaze" vcs="Git" />
+  </component>
+</project>

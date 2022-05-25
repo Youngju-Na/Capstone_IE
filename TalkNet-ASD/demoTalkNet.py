@@ -15,6 +15,16 @@ from scenedetect.detectors import ContentDetector
 from model.faceDetector.s3fd import S3FD
 from talkNet import talkNet
 
+# PureGaze 추가
+sys.path.append('/home/youngju/youngju/Capstone_IE/TalkNet-ASD/PureGaze')
+from PureGaze.model import model, modules
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+
+
+
 warnings.filterwarnings("ignore")
 
 parser = argparse.ArgumentParser(description = "TalkNet Demo or Columnbia ASD Evaluation")
@@ -204,41 +214,66 @@ def extract_MFCC(file, outPath):
 	featuresPath = os.path.join(outPath, file.split('/')[-1].replace('.wav', '.npy'))
 	numpy.save(featuresPath, mfcc)
 
-def evaluate_network(files, args):
+def evaluate_network(files, args):	
 	# GPU: active speaker detection by pretrained TalkNet
 	s = talkNet()
 	s.loadParameters(args.pretrainModel)
 	sys.stderr.write("Model %s loaded from previous state! \r\n"%args.pretrainModel)
 	s.eval()
+	# PureGaze Model 선언
+	puregaze = model.Model()
+	statedict = torch.load('/home/youngju/youngju/Capstone_IE/TalkNet-ASD/PureGaze/pretrained_models/Res50_PureGaze_ETH.pt', map_location=f"cuda:0")
+	print("Successfully loaded puregaze Model!")
+	puregaze.cuda(); puregaze.load_state_dict(statedict); puregaze.eval()
+
 	allScores = []
+	allGazes = []
+
 	# durationSet = {1,2,4,6} # To make the result more reliable
-	durationSet = {1,1,1,2,2,2,3,3,4,5,6} # Use this line can get more reliable result
+	durationSet = {1, 2,4, 6} # Use this line can get more reliable result
 	for file in tqdm.tqdm(files, total = len(files)):
 		fileName = os.path.splitext(file.split('/')[-1])[0] # Load audio and video
-		_, audio = wavfile.read(os.path.join(args.pycropPath, fileName + '.wav'))
+		# Audio Features
+		_, audio = wavfile.read(os.path.join(args.pycropPath, fileName + '.wav')) # 해당 사람에 대한 오디오를 가져온다
 		audioFeature = python_speech_features.mfcc(audio, 16000, numcep = 13, winlen = 0.025, winstep = 0.010)
+		# Video Features
 		video = cv2.VideoCapture(os.path.join(args.pycropPath, fileName + '.avi'))
 		videoFeature = []
+		GazeFeature = []  # for PureGaze result
+
+		# 비디오가 반복하는 동안 계속 수행
+		count = 0
 		while video.isOpened():
-			ret, frames = video.read()
-			if ret == True:
-				face = cv2.cvtColor(frames, cv2.COLOR_BGR2GRAY)
-				face = cv2.resize(face, (224,224))
+			count += 1
+			ret, frames = video.read() # 하나의 frame을 읽어들임
+			if ret == True: # value가 존재하면,
+				face = cv2.cvtColor(frames, cv2.COLOR_BGR2GRAY) # color->gray 이미지로 변경
+				gazeFace = cv2.cvtColor(frames, cv2.COLOR_BGR2RGB)
+				face = cv2.resize(face, (224,224)) # resizing
 				face = face[int(112-(112/2)):int(112+(112/2)), int(112-(112/2)):int(112+(112/2))]
-				videoFeature.append(face)
+				videoFeature.append(face) # video feature에 추가
+
+				# PureGaze model input
+				face = torch.FloatTensor(gazeFace).permute(2, 0, 1).unsqueeze(0).cuda()
+				pred_ang = puregaze(face)[0][0].cpu().detach().numpy()
+				GazeFeature.append(pred_ang)
+				# save results
+				# add to visualizations
 			else:
 				break
 		video.release()
-		videoFeature = numpy.array(videoFeature)
-		length = min((audioFeature.shape[0] - audioFeature.shape[0] % 4) / 100, videoFeature.shape[0])
-		audioFeature = audioFeature[:int(round(length * 100)),:]
+		videoFeature = numpy.array(videoFeature) # videofeature를 numpy로 만든다.
+		
+		length = min((audioFeature.shape[0] - audioFeature.shape[0] % 4) / 100, videoFeature.shape[0]) # 비디오 길이 계산
+		audioFeature = audioFeature[:int(round(length * 100)),:] # 
 		videoFeature = videoFeature[:int(round(length * 25)),:,:]
+		
 		allScore = [] # Evaluation use TalkNet
 		for duration in durationSet:
 			batchSize = int(math.ceil(length / duration))
 			scores = []
 			with torch.no_grad():
-				for i in range(batchSize):
+				for i in range(batchSize): # cross attention
 					inputA = torch.FloatTensor(audioFeature[i * duration * 100:(i+1) * duration * 100,:]).unsqueeze(0).cuda()
 					inputV = torch.FloatTensor(videoFeature[i * duration * 25: (i+1) * duration * 25,:,:]).unsqueeze(0).cuda()
 					embedA = s.model.forward_audio_frontend(inputA)
@@ -249,25 +284,41 @@ def evaluate_network(files, args):
 					scores.extend(score)
 			allScore.append(scores)
 		allScore = numpy.round((numpy.mean(numpy.array(allScore), axis = 0)), 1).astype(float)
-		allScores.append(allScore)	
-	return allScores
+		allScores.append(allScore)
+		allGazes.append(GazeFeature)
+	return allScores, allGazes
 
-def visualization(tracks, scores, args):
+def visualization(tracks, scores, angles, args):
 	# CPU: visulize the result for video format
-	flist = glob.glob(os.path.join(args.pyframesPath, '*.jpg'))
-	flist.sort()
+	flist = glob.glob(os.path.join(args.pyframesPath, '*.jpg')) # 이미지 파일을 모두 가져옴.
+	flist.sort() # 순서에 맞게 정렬
 	faces = [[] for i in range(len(flist))]
-	for tidx, track in enumerate(tracks):
+	for tidx, (track, sub_angles) in enumerate(zip(tracks, angles)):
 		score = scores[tidx]
 		for fidx, frame in enumerate(track['track']['frame'].tolist()):
 			s = score[max(fidx - 2, 0): min(fidx + 3, len(score) - 1)] # average smoothing
 			s = numpy.mean(s)
-			faces[frame].append({'track':tidx, 'score':float(s),'s':track['proc_track']['s'][fidx], 'x':track['proc_track']['x'][fidx], 'y':track['proc_track']['y'][fidx]})
+			faces[frame].append({'track':tidx, 'score':float(s),'s':track['proc_track']['s'][fidx], 'x':track['proc_track']['x'][fidx], 'y':track['proc_track']['y'][fidx], 'angle': sub_angles[fidx]})
 	firstImage = cv2.imread(flist[0])
 	fw = firstImage.shape[1]
 	fh = firstImage.shape[0]
 	vOut = cv2.VideoWriter(os.path.join(args.pyaviPath, 'video_only.avi'), cv2.VideoWriter_fourcc(*'XVID'), 25, (fw,fh))
 	colorDict = {0: 0, 1: 255}
+
+
+	# 수정이 필요한 부분!
+	"""
+		fidx, fname은 각각 frame index, framename의 이름임.
+		faces 모든 프레임의 정보가 저장되어 있음.
+		반복문을 돌면서 각 face는 dictionary형식이고, 키 'angle'에는 value로 해당 얼굴의 각도가 나와 있음.
+		여기서 각도가 벗어났는지 중간에 확인해서 벗어났을 때, 시각화하는 색을 빨간색으로 변경하도록 만들어야 함. (338번줄 cv2.putText 함수의 인자 중 (255, 255, 0)을 -> (255, 0, 0)으로 변경)
+		
+		4개의 점을 보는 각도는 주어졌다고 가정하고 (ex, 좌우(-20 ~ +20), 싱히(-20 ~ +20) ), 해당 각도를 벗어나면 RED표시.
+		
+		[참고]
+		test하는 방법은 TalkNet-ASD 경로에서 python demoTalkNet.py --videoName [filename] 형식으로 실행하면 됨. (아마 로컬에서도 돌아갈듯)
+		
+	"""
 	for fidx, fname in tqdm.tqdm(enumerate(flist), total = len(flist)):
 		image = cv2.imread(fname)
 		for face in faces[fidx]:
@@ -275,6 +326,17 @@ def visualization(tracks, scores, args):
 			txt = round(face['score'], 1)
 			cv2.rectangle(image, (int(face['x']-face['s']), int(face['y']-face['s'])), (int(face['x']+face['s']), int(face['y']+face['s'])),(0,clr,255-clr),10)
 			cv2.putText(image,'%s'%(txt), (int(face['x']-face['s']), int(face['y']-face['s'])), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0,clr,255-clr),5)
+
+			# 추가할 위치
+			########################################
+
+			########################################
+
+
+			# 시선 추정 결과 시각화
+			angle_txt = face['angle']
+			cv2.putText(image,'%s'%(angle_txt), (int(20), int(50)), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 0),5)
+
 		vOut.write(image)
 	vOut.release()
 	command = ("ffmpeg -y -i %s -i %s -threads %d -c:v copy -c:a copy %s -loglevel panic" % \
@@ -388,7 +450,7 @@ def main():
 	os.makedirs(args.pyworkPath, exist_ok = True) # Save the results in this process by the pckl method
 	os.makedirs(args.pycropPath, exist_ok = True) # Save the detected face clips (audio+video) in this process
 
-	# Extract video
+	# Extract video 
 	args.videoFilePath = os.path.join(args.pyaviPath, 'video.avi')
 	# If duration did not set, extract the whole video, otherwise extract the video from 'args.start' to 'args.start + args.duration'
 	if args.duration == 0:
@@ -441,7 +503,7 @@ def main():
 	# Active Speaker Detection by TalkNet
 	files = glob.glob("%s/*.avi"%args.pycropPath)
 	files.sort()
-	scores = evaluate_network(files, args)
+	scores, angles = evaluate_network(files, args)
 	savePath = os.path.join(args.pyworkPath, 'scores.pckl')
 	with open(savePath, 'wb') as fil:
 		pickle.dump(scores, fil)
@@ -452,7 +514,7 @@ def main():
 		quit()
 	else:
 		# Visualization, save the result as the new video	
-		visualization(vidTracks, scores, args)	
+		visualization(vidTracks, scores, angles, args)
 
 if __name__ == '__main__':
     main()
